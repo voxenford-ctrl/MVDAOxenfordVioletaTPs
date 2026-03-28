@@ -183,7 +183,7 @@ crecimiento <- tibble(
 crecimiento
 ```
 
-**Conclusión:** Si la tasa de crecimiento porcentual de los grupos "Low income" y "Lower middle income" es mayor que la de "Upper middle income" y "High income", la hipótesis se confirma. Al mismo tiempo, los valores absolutos de 2023 deberían seguir siendo menores en los grupos de bajos ingresos, lo cual evidencia la brecha digital persistente.
+**Conclusión:** Los resultados confirman la hipótesis. Los grupos de ingresos bajos (Low income y Lower middle income) mostraron tasas de crecimiento porcentual en el acceso a internet muy superiores a las de los grupos de ingresos altos entre 2013 y 2023. Sin embargo, en términos absolutos, la penetración de internet en los países de bajos ingresos sigue siendo significativamente menor, lo que evidencia la persistencia de la brecha digital global.
 
 ## 10. Exportación del resultado
 
