@@ -1,4 +1,17 @@
-.Rproj.user
+# macOS
+.DS_Store
+
+# Apple Numbers
+*.numbers
+
+# R
 .Rhistory
-.RData
-.Ruserdata
+.Rdata
+.httr-oauth
+.Rproj.user
+
+# Quarto
+/.quarto/
+_freeze/
+*_files/
+*.html

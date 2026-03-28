@@ -1,26 +1,194 @@
 ---
-title: "uso_de_internet_mundial"
+title: "TP1: Uso de Internet a nivel mundial"
+author: "Oxenford Violeta"
 format: html
 editor: visual
 ---
 
-## Quarto
+## Introducción
 
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+En este trabajo se analizan datos del Banco Mundial sobre el porcentaje de la población que usa internet, con el objetivo de evaluar la siguiente hipótesis:
 
-## Running Code
+> *"En la última década (2013-2023), las regiones compuestas por países de ingresos bajos (Low income y Lower middle income) han mostrado una tasa de crecimiento porcentual en el acceso a internet superior a la de las regiones de ingresos altos (Upper middle income y High Income), aunque su penetración absoluta siga siendo significativamente menor."*
 
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
-```{r}
-1 + 1
-```
-
-You can add options to executable code like this
+## Configuración inicial
 
 ```{r}
-#| echo: false
-2 * 2
+#| message: false
+#| warning: false
+
+# Cargo las librerías necesarias
+library(tidyverse)
+library(janitor)
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+## 1. Función personalizada para cargar datos
+
+Defino una función que lee un archivo CSV, limpia los nombres de las columnas con `janitor::clean_names()` e imprime las columnas del dataframe resultante.
+
+```{r}
+cargar_datos <- function(ruta, skip = 0) {
+  datos <- read_csv(ruta, skip = skip, show_col_types = FALSE) |>
+    clean_names()
+  
+  cat("Columnas del archivo", basename(ruta), ":\n")
+  cat(paste(colnames(datos), collapse = ", "), "\n\n")
+  
+  return(datos)
+}
+```
+
+## 2. Lectura y normalización de los datos
+
+### Indicadores de Internet
+
+El archivo `internet_users_world_wide.csv` tiene filas de metadatos al inicio (fuente y fecha de actualización), por lo que las salteo con `skip = 4`.
+
+```{r}
+internet <- cargar_datos("../data/internet_users_world_wide.csv", skip = 4)
+```
+
+Elimino las columnas vacías que puedan haber quedado al final y la columna `indicator_code`, que no aporta al análisis.
+
+```{r}
+internet <- internet |>
+  select(-indicator_code) |>
+  select(where(~ !all(is.na(.x))))
+
+head(internet)
+```
+
+### Metadatos de países
+
+```{r}
+metadata <- cargar_datos("../data/metadata_countries_internet_users.csv")
+
+head(metadata)
+```
+
+## 3. Pivoteo: de formato Wide a Long
+
+La tabla de indicadores tiene los años como columnas (formato wide). La transformo a formato long para tener una columna `anio` y otra `valor`.
+
+```{r}
+internet_long <- internet |>
+  pivot_longer(
+    cols = starts_with("x"),
+    names_to = "anio",
+    values_to = "valor"
+  ) |>
+  # Limpio el prefijo "x" que agrega clean_names() a las columnas numéricas
+  mutate(anio = as.integer(str_remove(anio, "^x")))
+
+head(internet_long)
+```
+
+## 4. Tratamiento de NAs
+
+Verifico cuántos valores faltantes hay por columna y los elimino, ya que no puedo calcular promedios con datos ausentes.
+
+```{r}
+# Cantidad de NAs antes del filtro
+cat("NAs en 'valor' antes de filtrar:", sum(is.na(internet_long$valor)), "\n")
+cat("Filas totales antes:", nrow(internet_long), "\n")
+
+internet_long <- internet_long |>
+  drop_na(valor)
+
+cat("Filas después de eliminar NAs:", nrow(internet_long), "\n")
+```
+
+## 5. Cruce de datos (left_join)
+
+Uno la tabla de indicadores con los metadatos para obtener la región y el grupo de ingresos de cada país.
+
+```{r}
+internet_completo <- internet_long |>
+  left_join(metadata, by = "country_code")
+
+head(internet_completo)
+```
+
+Verifico que el join haya funcionado correctamente observando cuántos registros quedaron sin grupo de ingresos (son agregados regionales del Banco Mundial, no países individuales).
+
+```{r}
+cat("Registros sin income_group asignado:",
+    sum(is.na(internet_completo$income_group) | internet_completo$income_group == ""),
+    "\n")
+```
+
+Filtro solo los registros que tienen grupo de ingresos asignado (es decir, países reales, no agregados regionales).
+
+```{r}
+internet_completo <- internet_completo |>
+  filter(!is.na(income_group) & income_group != "")
+```
+
+## 6. Uso de factores para ordenar el grupo de ingresos
+
+Convierto `income_group` a factor con niveles ordenados jerárquicamente de menor a mayor ingreso.
+
+```{r}
+niveles_ingreso <- c("Low income", "Lower middle income",
+                     "Upper middle income", "High income")
+
+internet_completo <- internet_completo |>
+  mutate(income_group = factor(income_group, levels = niveles_ingreso, ordered = TRUE))
+
+# Verifico el orden
+levels(internet_completo$income_group)
+```
+
+## 7. Agregación: promedio por grupo de ingresos y año
+
+Filtro la década 2013-2023 y calculo el promedio de penetración de internet por grupo de ingresos y año.
+
+```{r}
+resumen <- internet_completo |>
+  filter(anio >= 2013 & anio <= 2023) |>
+  group_by(anio, income_group) |>
+  summarise(promedio = mean(valor, na.rm = TRUE), .groups = "drop")
+
+resumen
+```
+
+## 8. Pivoteo del resumen para el formato de entrega
+
+Transformo la tabla resumen al formato wide que pide la consigna, con una columna por grupo de ingresos.
+
+```{r}
+resultado <- resumen |>
+  pivot_wider(names_from = income_group, values_from = promedio) |>
+  mutate(indicator_name = "Proporción de la población que usa internet (%)") |>
+  arrange(anio)
+
+resultado
+```
+
+## 9. Evaluación de la hipótesis
+
+Calculo la tasa de crecimiento porcentual entre 2013 y 2023 para cada grupo de ingresos.
+
+```{r}
+valor_2013 <- resultado |> filter(anio == 2013)
+valor_2023 <- resultado |> filter(anio == 2023)
+
+crecimiento <- tibble(
+  income_group = niveles_ingreso,
+  valor_2013 = as.numeric(valor_2013[1, niveles_ingreso]),
+  valor_2023 = as.numeric(valor_2023[1, niveles_ingreso]),
+  crecimiento_pct = round((valor_2023 - valor_2013) / valor_2013 * 100, 2)
+)
+
+crecimiento
+```
+
+**Conclusión:** Si la tasa de crecimiento porcentual de los grupos "Low income" y "Lower middle income" es mayor que la de "Upper middle income" y "High income", la hipótesis se confirma. Al mismo tiempo, los valores absolutos de 2023 deberían seguir siendo menores en los grupos de bajos ingresos, lo cual evidencia la brecha digital persistente.
+
+## 10. Exportación del resultado
+
+```{r}
+write_csv(resultado, "../output/resultado_hipotesis.csv")
+
+cat("Archivo exportado exitosamente a ../output/resultado_hipotesis.csv\n")
+```
