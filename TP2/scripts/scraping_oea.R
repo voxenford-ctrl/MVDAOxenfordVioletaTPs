@@ -82,8 +82,9 @@ scrape_cuerpo <- function(url) {
   
   # Selector del cuerpo del comunicado (identificado con SelectorGadget)
   cuerpo <- pagina |>
-    html_node(".field-items") |>
-    html_text(trim = TRUE)
+    html_nodes("#rightmaincol p") |>
+    html_text(trim = TRUE) |>
+    paste(collapse = " ")
   
   if (is.null(cuerpo) || length(cuerpo) == 0) return(NA_character_)
   
