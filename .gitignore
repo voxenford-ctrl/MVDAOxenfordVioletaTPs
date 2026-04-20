@@ -15,3 +15,9 @@
 _freeze/
 *_files/
 *.html
+
+# Modelo udpipe (muy pesado)
+TP2/data/*.udpipe
+
+# Archivos Numbers del TP1
+TP1/data/*.numbers
