@@ -1,0 +1,89 @@
+---
+title: "Regresión Logística: Ingresos en el Censo de EE.UU."
+author: "Violeta Oxenford"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    theme: flatly
+    code-fold: true
+    code-summary: "Ver código"
+    df-print: paged
+lang: es
+---
+
+## 0. Preparación: carga de librerías y datos
+
+```{r}
+#| label: setup
+#| message: false
+#| warning: false
+
+# Instalamos pacman si no está disponible
+if (!require("pacman")) install.packages("pacman")
+
+# Cargamos todas las librerías necesarias para el análisis
+pacman::p_load(
+  tidyverse,      # Manipulación de datos y visualización (ggplot2, dplyr)
+  here,           # Rutas de archivos relativas al proyecto
+  scales,         # Formateo de ejes en gráficos (porcentajes, etc.)
+  broom,          # Convertir outputs de modelos en dataframes
+  knitr,          # Generación de tablas con kable()
+  kableExtra,     # Decoración y estilo de tablas
+  marginaleffects,# Cálculo de efectos marginales promedio (AME)
+  patchwork       # Combinar múltiples gráficos
+)
+```
+
+## 0.1 Carga y limpieza de datos
+
+```{r}
+#| label: carga-datos
+#| message: false
+#| warning: false
+
+# Cargamos el CSV usando here(), que construye la ruta desde la raíz del proyecto
+datos_raw <- read_csv(here("TP3", "data", "adult_census_USA.csv"))
+
+# Limpieza y transformación de variables
+datos <- datos_raw |>
+  # Eliminamos filas con valores faltantes
+  drop_na() |>
+  mutate(
+    # Variable objetivo: factor con <=50K como referencia (nivel base)
+    # y >50K como la clase a predecir
+    income = factor(income, levels = c("<=50K", ">50K")),
+    
+    # Versión numérica de income: 0 = <=50K, 1 = >50K
+    # Útil para graficar probabilidades
+    income_num = ifelse(income == ">50K", 1, 0),
+    
+    # Simplificamos marital_status a dos categorías como sugiere la consigna
+    # "married" = casado/a actualmente, "single" = todo el resto
+    marital_status = case_when(
+      marital_status == "Married-civ-spouse" ~ "married",
+      marital_status == "Married-AF-spouse"  ~ "married",
+      TRUE                                   ~ "single"
+    ),
+    marital_status = factor(marital_status, levels = c("single", "married")),
+    
+    # Sex como factor (Male como referencia)
+    sex = factor(sex, levels = c("Male", "Female")),
+    
+    # Workclass simplificado
+    workclass = factor(workclass),
+    
+    # Education como factor ordenado por nivel
+    education = factor(education)
+  )
+
+# Verificamos las dimensiones del dataset limpio
+cat("Filas:", nrow(datos), "| Columnas:", ncol(datos), "\n")
+
+# Verificamos el balance de la variable objetivo
+cat("\nDistribución de income:\n")
+print(table(datos$income))
+cat("\nProporciones:\n")
+print(prop.table(table(datos$income)) |> round(3))
+```
