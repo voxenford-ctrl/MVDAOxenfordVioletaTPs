@@ -87,3 +87,394 @@ print(table(datos$income))
 cat("\nProporciones:\n")
 print(prop.table(table(datos$income)) |> round(3))
 ```
+
+## 1. Análisis Exploratorio
+
+En esta sección visualizamos cómo se distribuyen las variables independientes
+según la variable objetivo `income`. El objetivo es detectar qué variables
+separan mejor a quienes ganan más o menos de $50K, y justificar decisiones
+de transformación e interacción.
+
+```{r}
+#| label: exploratorio
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 8
+
+# Paleta de colores consistente para todo el notebook
+paleta <- c("<=50K" = "#2166AC", ">50K" = "#B2182B")
+
+# --- Gráfico 1: Edad vs Income (densidad) ---
+p_age <- datos |>
+  ggplot(aes(x = age, fill = income, color = income)) +
+  geom_density(alpha = 0.5, linewidth = 0.8) +
+  scale_fill_manual(values = paleta, name = "Ingreso") +
+  scale_color_manual(values = paleta, name = "Ingreso") +
+  labs(title = "Distribución por Edad",
+       x = "Edad (años)", y = "Densidad") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+
+# --- Gráfico 2: Horas semanales vs Income (violin + boxplot) ---
+p_hours <- datos |>
+  ggplot(aes(x = income, y = hours_per_week,
+             fill = income, color = income)) +
+  geom_violin(alpha = 0.3, linewidth = 0.5) +
+  geom_boxplot(width = 0.2, alpha = 0.8, color = "gray20",
+               outlier.shape = NA) +
+  scale_fill_manual(values = paleta, guide = "none") +
+  scale_color_manual(values = paleta, guide = "none") +
+  labs(title = "Horas Semanales de Trabajo",
+       x = "Ingreso", y = "Horas por semana") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+
+# --- Gráfico 3: Estado civil vs Income (barras proporcionales) ---
+p_marital <- datos |>
+  ggplot(aes(x = marital_status, fill = income)) +
+  geom_bar(position = "fill", alpha = 0.85, color = "white") +
+  scale_fill_manual(values = paleta, name = "Ingreso") +
+  scale_y_continuous(labels = label_percent()) +
+  labs(title = "Ingreso por Estado Civil",
+       x = "Estado Civil", y = "Proporción") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+
+# --- Gráfico 4: Sexo vs Income (barras proporcionales) ---
+p_sex <- datos |>
+  ggplot(aes(x = sex, fill = income)) +
+  geom_bar(position = "fill", alpha = 0.85, color = "white") +
+  scale_fill_manual(values = paleta, name = "Ingreso") +
+  scale_y_continuous(labels = label_percent()) +
+  labs(title = "Ingreso por Sexo",
+       x = "Sexo", y = "Proporción") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+
+# Combinamos los 4 gráficos con patchwork
+(p_age | p_hours) / (p_marital | p_sex) +
+  plot_annotation(
+    title = "Variables predictoras según nivel de ingreso",
+    subtitle = "Edad y horas muestran diferencias claras. Estado civil y sexo también discriminan.",
+    theme = theme(plot.title = element_text(face = "bold", size = 16))
+  )
+```
+
+## 1.1 Justificación de transformaciones e interacción
+
+Las distribuciones anteriores sugieren dos decisiones de especificación:
+
+**Transformación logarítmica:** La variable `hours_per_week` muestra una 
+distribución asimétrica con outliers hacia valores altos. Sin embargo, 
+dado que sus valores nunca son 0, no es estrictamente necesaria. 
+Sí aplicaremos `log1p()` si la distribución lo justifica al modelar.
+
+**Término de interacción:** Proponemos la interacción `sex * marital_status`.
+La hipótesis teórica es que el efecto del estado civil sobre la probabilidad 
+de altos ingresos **no es igual para hombres y mujeres**. En el mercado 
+laboral estadounidense, el matrimonio históricamente beneficia más a los 
+hombres (mayor dedicación laboral del proveedor) que a las mujeres 
+(que pueden reducir horas por cuidado del hogar). Este fenómeno, 
+documentado en economía laboral como la *marriage premium*, sugiere 
+que el efecto de estar casado/a sobre los ingresos depende del género.
+
+```{r}
+#| label: interaccion-exploratoria
+#| message: false
+#| warning: false
+#| fig-width: 9
+#| fig-height: 5
+
+# Visualizamos la distribución del ingreso según estado civil,
+# separado por sexo, para justificar la interacción
+datos |>
+  ggplot(aes(x = marital_status, fill = income)) +
+  geom_bar(position = "fill", alpha = 0.85, color = "white") +
+  facet_wrap(~ sex) +
+  scale_fill_manual(values = paleta, name = "Ingreso") +
+  scale_y_continuous(labels = label_percent()) +
+  labs(
+    title = "Ingreso por Estado Civil, separado por Sexo",
+    subtitle = "¿Cambia el efecto del matrimonio según el género?",
+    x = "Estado Civil", y = "Proporción"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+## 2. Ajuste de Modelos de Regresión Logística
+
+Los predictores seleccionados son: edad (`age`), horas semanales 
+(`hours_per_week`), sexo (`sex`) y estado civil (`marital_status`).
+
+- **Categoría de referencia en `sex`**: Male (hombre)
+- **Categoría de referencia en `marital_status`**: single (soltero/a)
+
+El Modelo 2 agrega la interacción `sex * marital_status` para capturar
+el diferencial efecto del matrimonio según género (*marriage premium*).
+
+```{r}
+#| label: modelos
+#| message: false
+#| warning: false
+
+# Modelo 1: sin interacción
+modelo_base <- glm(
+  income ~ age + hours_per_week + sex + marital_status,
+  family = "binomial",
+  data = datos
+)
+
+# Modelo 2: con interacción sex * marital_status
+modelo_int <- glm(
+  income ~ age + hours_per_week + sex * marital_status,
+  family = "binomial",
+  data = datos
+)
+
+# Revisamos el resumen del modelo con interacción
+summary(modelo_int)
+```
+
+## 3. Interpretación: Odds Ratios y Efectos Marginales
+
+### 3.1 Tabla de Odds Ratios
+
+```{r}
+#| label: odds-ratios
+#| message: false
+#| warning: false
+
+# Extraemos los OR con intervalos de confianza
+or_modelo <- broom::tidy(modelo_int,
+                         exponentiate = TRUE,
+                         conf.int = TRUE) |>
+  select(term, estimate, conf.low, conf.high, p.value) |>
+  mutate(
+    interpretacion = case_when(
+      estimate > 1 & p.value < 0.05 ~ "Aumenta chances (Sig.)",
+      estimate < 1 & p.value < 0.05 ~ "Reduce chances (Sig.)",
+      TRUE                           ~ "No significativo"
+    )
+  )
+
+# Tabla formateada
+or_modelo |>
+  rename(
+    `Predictor`      = term,
+    `Odds Ratio`     = estimate,
+    `IC Inferior`    = conf.low,
+    `IC Superior`    = conf.high,
+    `Valor p`        = p.value,
+    `Interpretación` = interpretacion
+  ) |>
+  knitr::kable(digits = 3,
+               caption = "Odds Ratios del Modelo con Interacción") |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE,
+    position = "center"
+  ) |>
+  row_spec(
+    row = which(or_modelo$p.value < 0.05),
+    bold = TRUE, color = "black", background = "#e6f2ff"
+  )
+```
+
+### 3.2 Efectos Marginales Promedio (AME)
+
+```{r}
+#| label: ame
+#| message: false
+#| warning: false
+
+# Calculamos los AME para todas las variables
+ame <- avg_slopes(
+  modelo_int,
+  variables = c("age", "hours_per_week", "sex", "marital_status"),
+  slope = "dydx"
+)
+
+# Tabla formateada
+ame |>
+  select(term, contrast, estimate, conf.low, conf.high, p.value) |>
+  mutate(
+    estimate_pct = paste0(round(estimate * 100, 2), "%"),
+    interpretacion = case_when(
+      estimate > 0 & p.value < 0.05 ~ "Aumenta prob. (Sig.)",
+      estimate < 0 & p.value < 0.05 ~ "Reduce prob. (Sig.)",
+      TRUE                           ~ "No significativo"
+    )
+  ) |>
+  select(term, contrast, estimate_pct, conf.low, conf.high, p.value, interpretacion) |>
+  rename(
+    `Predictor`      = term,
+    `Contraste`      = contrast,
+    `Efecto (Prob)`  = estimate_pct,
+    `IC Inferior`    = conf.low,
+    `IC Superior`    = conf.high,
+    `Valor p`        = p.value,
+    `Interpretación` = interpretacion
+  ) |>
+  knitr::kable(digits = 4,
+               caption = "Efectos Marginales Promedio (AME)") |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE,
+    position = "center"
+  ) |>
+  row_spec(
+    row = which(ame$p.value < 0.05),
+    bold = TRUE, color = "black", background = "#e6f2ff"
+  )
+```
+
+Las variables significativas muestran efectos claros sobre la probabilidad 
+de superar los $50K anuales. Cada año adicional de edad incrementa esa 
+probabilidad en 0.65 puntos porcentuales, y cada hora extra de trabajo 
+semanal la sube 0.75 puntos. El efecto más fuerte es el estado civil: 
+estar casado/a aumenta la probabilidad en promedio 43.66 puntos porcentuales 
+respecto a estar soltero/a. El efecto de ser mujer, al promediarlo sobre 
+todos los niveles de estado civil, resulta positivo (2.65%), lo cual 
+refleja el papel de la interacción: las mujeres casadas tienen chances 
+considerablemente más altas que las solteras.
+
+## 3.3 Forest Plot de Odds Ratios
+
+```{r}
+#| label: forest-plot
+#| message: false
+#| warning: false
+#| fig-width: 9
+#| fig-height: 5
+
+# Calculamos los intervalos de confianza manualmente para los 3 niveles
+df_plot_or <- broom::tidy(modelo_int) |>
+  filter(!term %in% c("(Intercept)")) |>
+  mutate(
+    # Intervalos en log-odds para 80%, 95% y 99%
+    lo_80 = estimate - qnorm(0.90) * std.error,
+    hi_80 = estimate + qnorm(0.90) * std.error,
+    lo_95 = estimate - qnorm(0.975) * std.error,
+    hi_95 = estimate + qnorm(0.975) * std.error,
+    lo_99 = estimate - qnorm(0.995) * std.error,
+    hi_99 = estimate + qnorm(0.995) * std.error,
+    # Exponenciamos todo para pasar a escala de Odds Ratios
+    across(c(estimate, starts_with("lo_"), starts_with("hi_")), exp),
+    # Etiquetas limpias
+    term_clean = case_match(
+      term,
+      "age"                            ~ "Edad (Años)",
+      "hours_per_week"                 ~ "Horas Semanales",
+      "sexFemale"                      ~ "Sexo: Mujer (vs Hombre)",
+      "marital_statusmarried"          ~ "Estado Civil: Casado/a (vs Soltero/a)",
+      "sexFemale:marital_statusmarried"~ "Interacción: Mujer × Casado/a",
+      .default = term
+    )
+  )
+
+ggplot(df_plot_or, aes(y = reorder(term_clean, estimate), x = estimate)) +
+  geom_vline(xintercept = 1, linetype = "dashed",
+             color = "gray40", linewidth = 1) +
+  geom_linerange(aes(xmin = lo_99, xmax = hi_99),
+                 color = "#74ADD1", linewidth = 1.5) +
+  geom_linerange(aes(xmin = lo_95, xmax = hi_95),
+                 color = "#4575B4", linewidth = 3.5) +
+  geom_linerange(aes(xmin = lo_80, xmax = hi_80),
+                 color = "#313695", linewidth = 6) +
+  geom_point(color = "#D73027", size = 4) +
+  scale_x_log10(breaks = c(0.1, 0.25, 0.5, 0.8, 1, 1.5, 2, 3, 5, 8)) +
+  labs(
+    title = "Efectos sobre la Probabilidad de Ingresos >$50K (Odds Ratios)",
+    subtitle = "Barras de error graduadas: 80% (gruesa), 95% (media), 99% (fina)",
+    x = "Odds Ratio (Escala Logarítmica)",
+    y = NULL,
+    caption = "Nota: si la barra cruza la línea punteada (OR=1), el efecto no es significativo a ese nivel."
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title   = element_text(face = "bold", size = 15),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.text.y  = element_text(face = "bold", size = 12),
+    axis.text.x  = element_text(size = 11)
+  )
+```
+## 4. Comparación Global de Modelos
+
+```{r}
+#| label: comparacion-modelos
+#| message: false
+#| warning: false
+
+# Comparamos ambos modelos con broom::glance()
+bind_rows(
+  broom::glance(modelo_base) |> mutate(Modelo = "1. Sin Interacción"),
+  broom::glance(modelo_int)  |> mutate(Modelo = "2. Con Interacción")
+) |>
+  mutate(pseudo_r2 = 1 - (deviance / null.deviance)) |>
+  select(Modelo, null.deviance, deviance, pseudo_r2, AIC, nobs) |>
+  rename(
+    `Deviance Nula`        = null.deviance,
+    `Deviance Residual`    = deviance,
+    `Pseudo-R² (McFadden)` = pseudo_r2,
+    `Observaciones`        = nobs
+  ) |>
+  knitr::kable(digits = 3,
+               caption = "Comparación de Modelos") |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE,
+    position = "center"
+  )
+```
+
+La inclusión de la interacción `sex * marital_status` mejora el ajuste del modelo:
+el AIC cae y el Pseudo-R² aumenta. Dado que la diferencia en AIC es mayor a 2,
+y que el término de interacción es estadísticamente significativo (p < 0.001),
+concluimos que el Modelo 2 es preferible. La interacción captura un fenómeno
+real: el efecto del matrimonio sobre los ingresos es significativamente distinto
+para hombres y mujeres, consistente con la evidencia sobre el *marriage premium*
+en el mercado laboral estadounidense.
+
+## 5. Visualización de la Interacción
+
+```{r}
+#| label: viz-interaccion
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 5
+
+# Comparamos las probabilidades predichas entre modelo base e interactivo
+p_base <- plot_predictions(modelo_base,
+                           condition = c("marital_status", "sex")) +
+  scale_color_manual(values = c("Male" = "#1B9E77", "Female" = "#D95F02")) +
+  scale_fill_manual(values  = c("Male" = "#1B9E77", "Female" = "#D95F02")) +
+  scale_y_continuous(labels = label_percent(), limits = c(0, 1)) +
+  labs(title    = "Modelo 1: Sin Interacción",
+       subtitle = "El efecto del matrimonio se asume\nidéntico para ambos sexos.",
+       x = "Estado Civil", y = "Probabilidad Predicha de >$50K") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "none")
+
+p_int <- plot_predictions(modelo_int,
+                          condition = c("marital_status", "sex")) +
+  scale_color_manual(values = c("Male" = "#1B9E77", "Female" = "#D95F02"),
+                     name = "Sexo") +
+  scale_fill_manual(values  = c("Male" = "#1B9E77", "Female" = "#D95F02"),
+                    name = "Sexo") +
+  scale_y_continuous(labels = label_percent(), limits = c(0, 1)) +
+  labs(title    = "Modelo 2: Con Interacción (Sexo × Estado Civil)",
+       subtitle = "La brecha entre hombres y mujeres casados\nes mayor que entre solteros.",
+       x = "Estado Civil", y = "") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+
+p_base + p_int +
+  plot_annotation(
+    title = "¿Por qué importa modelar la interacción?",
+    theme = theme(plot.title = element_text(face = "bold", size = 16))
+  )
+```
